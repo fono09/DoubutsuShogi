@@ -1,22 +1,35 @@
 require 'socket'
 
-default_settings = {
-	["c",1] => [1,2],
-	["c",2] => [1,1],
-	["e",1] => [1,3],
-	["e",2] => [2,1],
-	["g",1] => [2,3],
-	["g",2] => [0,0],
-	["l",1] => [1,3],
-	["l",2] => [1,0]
-}
+
+
 p default_settings
 exit
 
 class Piece
+	INITIAL_POSITION = {
+		["c",1] => [1,2],
+		["c",2] => [1,1],
+		["e",1] => [1,3],
+		["e",2] => [2,1],
+		["g",1] => [2,3],
+		["g",2] => [0,0],
+		["l",1] => [1,3],
+		["l",2] => [1,0]
+	}
+	#初期位置に関して
+	
+	MOVE_DIRECTION = {
+		"c" => [true,false,false,false,false,false,false,false],
+		"e" => [false,true,false,true,false,true,false,true],
+		"g" => [true,false,true,false,true,false,true,false],
+		"l" => [true,true,true,true,true,true,true,true],
+		"h" => [true,true,true,false,true,false,true,true]
+	}
+	#時計回りに進行方向
+
 	def initialize(type,player,pos_x,pos_y)
-		if default_settings[[type,player]] != [pos_x,pos_y] then
-			raise "サーバー改変疑惑"
+		if INITIAL_POSITION[[type,player]] != [pos_x,pos_y] then
+			raise "Piece#initialize failed"
 		end
 		@type = type
 		@player = player
@@ -24,8 +37,8 @@ class Piece
 		@pos_y = pos_y
 	end
 
-	def mv
-
+	def mv(dst_x,dst_y)
+		
 	end
 
 end

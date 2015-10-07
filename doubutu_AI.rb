@@ -1,153 +1,136 @@
 require 'socket'
-require 'matrix'
-
-
-
-p default_settings
-exit
-INITIAL_POSITION = {
-	["c",1] => [1,2],
-	["c",2] => [1,1],
-	["e",1] => [1,3],
-	["e",2] => [2,1],
-	["g",1] => [2,3],
-	["g",2] => [0,0],
-	["l",1] => [1,3],
-	["l",2] => [1,0]
-}
-#初期位置に関して
-
-MOVE_DIRECTION = {
-	"c" => [false,true,false,
-		false,false,false,
-		false,false,false],
-		"e" => [false,true,false,
-			true,false,true,
-			false,true,false],
-			"g" => [true,false,true,
-				false,false,false,
-				true,false,true],
-				"l" => [true,true,true,
-					true,false,true,
-					true,true,true],
-					"h" => [true,true,true,
-						true,false,true,
-						false,true,false]
-}
-#時計回りに進行方向
-
 
 class Board
 
-end
+	INITIAL_BOARD = [["g2", "--", "--", "e1"], ["l2", "c2", "c1", "l1"], ["e2", "--", "--", "g1"]]
 
-class Piece
+	DATA_LENGTH = 96
+	PIECE_LENGTH = 4
+	REC_NUM = DATA_LENGTH/PIECE_LENGTH
 
-	def initialize(p,m)
-		@player = p
-		@mv_dir = m
+	PLAYER1 = 0b0000
+	PLAYER2 = 0b1000
+	
+	B = 0b0001
+	C = 0b0010
+	E = 0b0011
+	G = 0b0100
+	L = 0b0101
+	H = 0b0111
+	
+	def initialize
+		@raw_data = to_b(INITIAL_BOARD)
 	end
 
-	def vec_2_idx(vx,vy)
-		return 1-vy,vx+1
-	end
-
-	def movable?(x,y)
-		idx = vec_2_idx(x,y)
-		dir = @player==1 ? @mv_dir : @mv_dir.reverse
-		return dir[idx[0]][idx[1]] 
-	end
-
-end
-
-class Chicken < Piece
-	def initialize(p)
-		super(p,[false,true,false,
-			false,false,false,
-			false,false,false])
-	end
-
-	def promotion
-		@mv_dir = [true,true,true,
-			true,false,true,
-			false,true,false]
-	end
-end
-
-class Elephant < Piece
-	def initialize(p)
-		super(p,[true,false,true,
-		      false,false,false,
-		      true,false,true])
-	end
-end
-
-class Giraf < Piece
-	def initialize(p)
-		super(p,[false,true,false,
-		      true,false,true,
-		      false,true,false])
-	end
-end
-
-class Lion < Piece
-	def initialize(p)
-		super(p,[true,true,true,
-		      true,false,true,
-		      true,true,true])
-	end
-end
-
-		
-
-
-	serverAddr = "localhost"
-	serverPort = 4444
-
-	s = TCPSocket.open(serverAddr,serverPort)
-
-	puts s.gets
-	Thread.abort_on_exception = true
-
-	t = Thread.new do
-
-		while line = s.gets
-			p line
-
-			if line =~ /, / then
-				board=[]
-				line.chomp.split(/, /).map{|piece| 
-					piece.split(/ /) 
-				}.each{|piece|
-					i = piece[0][0].codepoints[0].to_i - 'A'.codepoints[0].to_i
-					j = piece[0][1].to_i - 1
-					unless board[i] then
-						board[i] = []
-					end
-					board[i][j] = piece[1]
-				}
-				p board
+	def to_b(board)
+		bit = 0b0
+		board.each do |line|
+			line.each do |piece|
+				unless piece=="--" then
+					bit += eval(piece[0].upcase)
+					bit += eval("PLAYER"+piece[1])
+				else
+					bit += B
+				end
+				bit = bit << 4
 			end
-			sleep 0.1
 		end
-	end	
-	t.run
-
-	while true
-
-		line = readline
-
-		if line =~ /^q\s*$/ then
-			break
+		
+		zero_fill =  DATA_LENGTH - bit.bit_length
+		if zero_fill > 0
+			bit = bit << zero_fill
 		end
+		#零埋め
 
-		s.write(line)
+		return bit
+	end
 
-		sleep 0.1
+	def move_check(board,turn)
+		board = to_b(board)
+		win = 0b1111
+
+		from = []
+		to = []
+		REC_NUM.times.with_index do |i|
+			puts @raw_data
+			puts board
+
+			if  ((win << i)&(@raw_data ^ board)) != 0b0 then
+				if board & (win << i) == 0b1 then
+					from.push(i)
+				end
+
+				if board & (win << i) != 0b1 then
+					to.push(i)
+				end
+			end
+
+			p from
+			p to
+
+		end
 
 	end
 
-	puts "bye"
+end
 
-	s.close
+serverAddr = "localhost"
+serverPort = 4444
+
+s = TCPSocket.open(serverAddr,serverPort)
+
+puts s.gets
+Thread.abort_on_exception = true
+
+board = Board.new()
+whoami = ''
+t = Thread.new do
+
+	while line = s.gets
+		p line
+
+		if line =~ /You are Player(\d)/ then
+			whoami = $1
+		end
+
+		if line =~ /, / && line !~ /Sorry,/ then
+			data=[]
+			line.chomp.split(/, /).map{|piece| 
+				piece.split(/ /) 
+			}.each{|piece|
+				i = piece[0][0].codepoints[0].to_i - 'A'.codepoints[0].to_i
+				j = piece[0][1].to_i - 1
+				unless data[i] then
+					data[i] = []
+				end
+				data[i][j] = piece[1]
+			}
+			
+			s.write('whoami')
+
+			board.move_check(data,whoami)
+
+		end
+		sleep 0.1
+	end
+end	
+t.run
+
+while true
+
+	line = readline
+
+	if line =~ /^q\s*$/ then
+		break
+	end
+
+	s.write(line)
+
+	sleep 0.1
+
+end
+
+puts "bye"
+
+s.close
 

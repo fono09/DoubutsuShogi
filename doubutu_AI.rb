@@ -45,31 +45,58 @@ class Board
 		return bit
 	end
 
-	def move_check(board,turn)
+	def move_check(board,player)
 		board = to_b(board)
 		win = 0b1111
+		diff_bits = @raw_data^board
 
-		from = []
-		to = []
+		diff=[]
+		p REC_NUM
 		REC_NUM.times.with_index do |i|
-			puts @raw_data
-			puts board
 
-			if  ((win << i)&(@raw_data ^ board)) != 0b0 then
-				if board & (win << i) == 0b1 then
-					from.push(i)
-				end
+			i = REC_NUM-i
 
-				if board & (win << i) != 0b1 then
-					to.push(i)
-				end
+			if  (win&diff_bits) != 0b0 then
+				
+				diff.push(i)
 			end
-
-			p from
-			p to
+			
+			diff_bits = diff_bits >> PIECE_LENGTH
 
 		end
 
+		diff.sort!
+
+		from = nil
+		to = nil
+		take = nil
+		diff.each do |d|
+			rshift_length = (REC_NUM-d)*PIECE_LENGTH
+			
+			if d < 12 then 
+				if win&(board >> rshift_length) == B then
+					from = d
+				else
+					to = d
+				end
+
+				if win&(board >> rshift_length) != B && win&(@raw_data >> rshift_length) != B then
+					take = d
+				end
+			else
+				break
+				#if win&(board >> rshift_length) != B then
+				#	take = d
+				#end
+			end
+
+		end
+
+		puts "from #{from}"
+		puts "to   #{to}"
+		puts "take #{take}"
+
+		
 	end
 
 end
@@ -84,14 +111,20 @@ Thread.abort_on_exception = true
 
 board = Board.new()
 whoami = ''
+turn = ''
 t = Thread.new do
 
 	while line = s.gets
 		p line
 
-		if line =~ /You are Player(\d)/ then
-			whoami = $1
+		if line =~ /^You are Player(\d)/ then
+			whoami = $1.to_i-1
 		end
+
+		if line =~ /^Player(\d)/ then
+			turn = $1.to_i-1
+		end
+			
 
 		if line =~ /, / && line !~ /Sorry,/ then
 			data=[]
@@ -106,9 +139,8 @@ t = Thread.new do
 				data[i][j] = piece[1]
 			}
 			
-			s.write('whoami')
-
-			board.move_check(data,whoami)
+			s.write('turn')
+			board.move_check(data,turn)
 
 		end
 		sleep 0.1

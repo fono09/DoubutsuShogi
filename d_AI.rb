@@ -33,6 +33,20 @@ G = 0b0011
 L = 0b0100
 H = 0b0101
 
+#ビット列操作面倒だからいい具合にする
+class Fixnum
+	
+	def slice(first,last)
+		return self.to_s(2)[(-last-1)..(-first-1)].to_i(2)
+	end
+
+	def replace(first,last,value)
+		temp = self - (self.to_s(2)[(-last-1)..(-first-1)].to_i(2) << first)
+		temp += (value << first)
+		return temp
+	end
+
+end
 
 #ソケット通信対するラッパ
 class Server
@@ -182,6 +196,7 @@ class Board
 	end
 
 	def swap(axis)
+
 
 	end
 

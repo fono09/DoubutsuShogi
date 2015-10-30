@@ -11,7 +11,7 @@ BOARD_WIDTH = 3
 
 BOARD_AREA = 48
 PIECE_LENGTH = 4
-NUM_OF_CELL = BOARD_AREA/PIECE_LENGTH
+NUM_OF_CELL = 12
 P_BITMASK = 0b1111
 P_P_BITMASK = 0b1000
 P_T_BITMASK = 0b0111
@@ -40,7 +40,7 @@ class Fixnum
 		return self.to_s(2)[(-last-1)..(-first-1)].to_i(2)
 	end
 
-	def replace(first,last,value)
+	def overwrite(first,last,value)
 		temp = self - (self.to_s(2)[(-last-1)..(-first-1)].to_i(2) << first)
 		temp += (value << first)
 		return temp
@@ -191,37 +191,66 @@ end
 #ビット列に対する操作
 class Board
 	
-	attr_reader :bits, :swapped, :next_status
+	attr_reader :bits, :rotated, :next_boards
 
 	def initialize(bits)
 		@bits = bits
-		@swapped = [0,0]
+		@rotated = [0,0]
+		@next_boards = nil
 	end
 
-	SWAP_AXIS_P = 0
-	SWAP_AXIS_Y = 1
-	def swap!(axis)
-		case axis
-		when SWAP_AXIS_P
-			temp = @bits
-			(NUM_OF_CELL/2).times do |i|
-				temp_bits = temp.slice(i*PIECE_LENGTH,PIECE_LENGTH)
-				temp = temp.replace(i*PIECE_LENGTH,PIECE_LENGTH,temp.slice((NUM_OF_CELL/2 - i - 1)*PIECE_LENGTH,PIECE_LENGTH))
-				temp = temp.replace((NUM_OF_CELL/2 - i - 1)*PIECE_LENGTH,PIECE_LENGTH,temp_bits)
-			end
-			@swapped[0] = @swapped[0]==1 ? 0 : 1;
-			return swap
+	def is_board?(i)
+		return i+1 > NUM_OF_CELL
+	end
 
-		when SWAP_AXIS_Y
+	def get_piece(i)
+		raise "Can't get CPIECE_AREA" unless self.is_board?(i)
+		@bits.slice(i*PIECE_LENGTH,PIECE_LENGTH)
+	end
+
+	def ovewrite_piece(i,piece)
+		raise "Can't overwrite CPIECE_AREA" unless self.is_board?(i)
+		@bits = @bits.overwrite(i*PIECE_LENGTH,PIECE_LENGTH,piece)
+	end
+
+	def replace_piece(i,j)
+		raise "Can't replace CPIECE_AREA"  unless self.is_board?(i) && self.is_board(j)
+		temp = get_piece(i)
+		@bits = @bits.overwrite(i,get_piece(j))
+		@bits = @bits.overwrite(j,temp)
+	end
+
+	ROTATE_AXIS_P = 0
+	ROTATE_AXIS_Y = 1
+	def rotate(axis)
+		case axis
+		when ROTATE_AXIS_P
+			(NUM_OF_CELL/2).times do |i|
+				self.replace_piece(i,NUM_OF_CELL-i-1)
+			end
+
+			(NUM_OF_CELL).times do |i|
+				temp = self.get_piece(i)
+				temp = temp[3]==0b0 ? temp.overwrite(3,1,0b1) : temp.overwrite(3,1,0b0)
+				self.overwrite_piece(i,temp)
+			end
+			@rotated[0] = @rotated[0]==1 ? 0 : 1
+
+		when ROTATE_AXIS_Y
 			#DBに入れるとか大規模探索時に必要なやつ
 			#Y軸回転して容量削減(回転基準未定義)
 		end
+			
 	end
 	
-end
+	def put(i)
 
-#ボードにAI持たせるとどっちからどう見てるかわからないから実装する
-class AI
+	end
+
+	def enum_next_board
+			
+		@next_borads.push()
+	end	
 
 end
 

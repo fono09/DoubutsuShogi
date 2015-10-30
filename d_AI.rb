@@ -190,32 +190,43 @@ end
 
 #ビット列に対する操作
 class Board
-	attr_reader :bits
+	
+	attr_reader :bits, :swapped, :next_status
+
 	def initialize(bits)
 		@bits = bits
+		@swapped = [0,0]
 	end
 
-	def swap(axis)
-
-
-	end
-
+	SWAP_AXIS_P = 0
+	SWAP_AXIS_Y = 1
 	def swap!(axis)
+		case axis
+		when SWAP_AXIS_P
+			temp = @bits
+			(NUM_OF_CELL/2).times do |i|
+				temp_bits = temp.slice(i*PIECE_LENGTH,PIECE_LENGTH)
+				temp = temp.replace(i*PIECE_LENGTH,PIECE_LENGTH,temp.slice((NUM_OF_CELL/2 - i - 1)*PIECE_LENGTH,PIECE_LENGTH))
+				temp = temp.replace((NUM_OF_CELL/2 - i - 1)*PIECE_LENGTH,PIECE_LENGTH,temp_bits)
+			end
+			@swapped[0] = @swapped[0]==1 ? 0 : 1;
+			return swap
 
+		when SWAP_AXIS_Y
+			#DBに入れるとか大規模探索時に必要なやつ
+			#Y軸回転して容量削減(回転基準未定義)
+		end
 	end
+	
+end
 
-	def put(i)
-	end
+#ボードにAI持たせるとどっちからどう見てるかわからないから実装する
+class AI
 
-	def put!(i)
-	end
-
-	def next_states(i)
-	end
 end
 
 srv = Server.new('localhost',4444)
 while srv.board == nil || srv.turn == nil do
-	sleep 0.01
+	sleep 0.1
 end
 print srv.board,srv.turn

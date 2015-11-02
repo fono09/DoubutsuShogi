@@ -33,20 +33,44 @@ G = 0b0011
 L = 0b0100
 H = 0b0101
 
+MOVE_MESH_LENGTH = 9
+MOVE = {
+	B => 0b000000000,
+	C => 0b000100000,
+	E => 0b101000101,
+	G => 0b010101010,
+	L => 0b111101111,
+	H => 0b110101110
+}
+MOVE_IDX = {
+	8 => -1*BOARD_HEIGHT-1,
+	7 => -1*BOARD_HEIGHT,
+	6 => -1*BOARD_HEIGHT+1,
+	5 => 1,
+	4 => 0,
+	3 => -1,
+	2 => BOARD_HEIGHT-1,
+	1 => BOARD_HEIGHT,
+	0 => BOARD_HEIGHT+1
+}
+
 #ビット列操作面倒だからいい具合にする
-class Fixnum
+class Integer
 	
 	def slice(first,last)
+		#"%b"% ~(0b1111 << 10) ..1000011111111..
 		return self.to_s(2)[(-last-1)..(-first-1)].to_i(2)
 	end
 
 	def overwrite(first,last,value)
+		
 		temp = self - (self.to_s(2)[(-last-1)..(-first-1)].to_i(2) << first)
 		temp += (value << first)
 		return temp
 	end
 
 end
+
 
 #ソケット通信対するラッパ
 class Server
@@ -67,14 +91,14 @@ class Server
 				end
 			}],
 			["whoami\n",Proc.new{|line|
-				if line =~ /You are Player(\b)/ then
-					@my_turn = $1.to_i
+				if line =~ /You are Player(\d)\.$/ then
+					@my_turn = eval("PLAYER#{$1.to_i}")
 				end
 
 			}],
 			["turn\n",Proc.new{|line|
 				if line =~ /^Player(\d)$/ then
-					@turn = $1.to_i
+					@turn = eval("PLAYER#{$1.to_i}")
 				end
 			}]
 		]
@@ -119,7 +143,7 @@ class Server
 			piece = line.split(/ /)
 			/([A-E])([1-6])/ =~ piece[0]
 			col = $1.codepoints[0].to_i - 'A'.codepoints[0].to_i
-			row = $2.to_i - 1
+			row = $2.to_i-1
 
 			temp_bits = 0b0
 			type = ''
@@ -131,19 +155,20 @@ class Server
 				temp_bits+=type
 				temp_bits+=player
 			end
-
-			if col < BOARD_WIDTH then
-				bits += temp_bits << (col*BOARD_HEIGHT+row)*PIECE_LENGTH+CPIECE_AREA
+			
+			if col < BOARD_WIDTH && row < BOARD_HEIGHT then
+				bits += temp_bits << ((NUM_OF_CELL-col*BOARD_HEIGHT-row-1)*PIECE_LENGTH+CPIECE_AREA)
 			else
 				temp_bits = 0b0
 				if G-type < 0 then
 					raise "LION has been taken. Check the board."
 				end
-				temp_bits += 0b1 << (G-type)*CPIECE_LENGTH
+				temp_bits += 0b1 << ((G-type)*CPIECE_LENGTH)
 				bits += temp_bits << (CPIECE_PLAYER_AREA*(player == PLAYER1 ? 1 : 0))
 			end
 		end
-		
+
+	
 		return bits
 	end
 
@@ -185,39 +210,95 @@ class Server
 
 		@socket.write("mv #{from} #{to}\n")
 	end
-					
+			
+
+	def debug_print
+		puts "board %b\n" % @board
+		puts "turn %b\n" % @turn
+		puts "my_turn %b\n" % @my_turn
+	end
+
+	def wait
+		while @board == nil || @turn == nil || @my_turn == nil do
+			sleep 1
+		end
+	end
+			
 end
 
-#ビット列に対する操作
+#ボードビット列に対する操作
 class Board
 	
-	attr_reader :bits, :rotated, :next_boards
+	attr_reader :bits, :next_boards 
+		#:rotated,
 
 	def initialize(bits)
 		@bits = bits
-		@rotated = [0,0]
-		@next_boards = nil
+		#@rotated = [0,0]
+		@next_boards = []
 	end
 
 	def is_board?(i)
-		return i+1 > NUM_OF_CELL
+		return (i < NUM_OF_CELL)
 	end
 
 	def get_piece(i)
-		raise "Can't get CPIECE_AREA" unless self.is_board?(i)
-		@bits.slice(i*PIECE_LENGTH,PIECE_LENGTH)
+		raise "Can't get CPIECE_AREA" unless is_board?(i)
+		first = (NUM_OF_CELL-i-1)*PIECE_LENGTH+CPIECE_AREA
+		last = first+CPIECE_LENGTH+1
+		return @bits.slice(first,last)
 	end
 
-	def ovewrite_piece(i,piece)
-		raise "Can't overwrite CPIECE_AREA" unless self.is_board?(i)
-		@bits = @bits.overwrite(i*PIECE_LENGTH,PIECE_LENGTH,piece)
+	def get_piece_player(i)
+		return (get_piece(i)&P_P_BITMASK)
+	end
+
+	def get_piece_type(i)
+		return (get_piece(i)&P_T_BITMASK)
+	end
+
+	def overwrite_piece(i,piece)
+		raise "Can't overwrite CPIECE_AREA" unless is_board?(i)
+		@bits = @bits.overwrite(i*PIECE_LENGTH+CPIECE_AREA,PIECE_LENGTH,piece)
 	end
 
 	def replace_piece(i,j)
-		raise "Can't replace CPIECE_AREA"  unless self.is_board?(i) && self.is_board(j)
+		raise "Can't replace CPIECE_AREA"  unless is_board?(i) && is_board?(j)
 		temp = get_piece(i)
-		@bits = @bits.overwrite(i,get_piece(j))
-		@bits = @bits.overwrite(j,temp)
+		@bits = overwrite_piece(i,get_piece(j))
+		@bits = overwrite_piece(j,temp)
+	end
+
+	def get_cpiece(i)
+		raise "Can't get PIECE_AREA" if is_board?(i)
+		first = (i-NUM_OF_CELL)
+	end
+
+	def capture_piece(i)
+		raise "Can't capture CPIECE_AREA" unless is_board?(i)
+
+		player = (get_piece_player(i) == PLAYER1 ? 0 : 1)
+		#取った逆のプレイヤーの持ち駒が増える
+		
+		pos = nil
+		case get_piece_type(i)
+		when C
+			pos = 2
+		when E
+			pos = 1
+		when G
+			pos = 0
+		end
+
+		if pos !=nil then
+			temp = @bits.slice(CPIECE_PLAYER_AREA*player+CPIECE_LENGTH*pos,CPIECE_PLAYER_AREA*player+CPIECE_LENGTH*pos)
+		overwrite_piece(i,0)
+		
+			@bits = @bits.overwrite(CPIECE_PLAYER_AREA*player+CPIECE_LENGTH*pos,CPIECE_LENGTH,temp+1)
+		else
+			puts "Lion #{i} Captured!!!"
+		end
+
 	end
 
 	ROTATE_AXIS_P = 0
@@ -226,36 +307,123 @@ class Board
 		case axis
 		when ROTATE_AXIS_P
 			(NUM_OF_CELL/2).times do |i|
-				self.replace_piece(i,NUM_OF_CELL-i-1)
+				replace_piece(i,NUM_OF_CELL-i-1)
 			end
 
-			(NUM_OF_CELL).times do |i|
-				temp = self.get_piece(i)
+			NUM_OF_CELL.times do |i|
+				temp = get_piece(i)
 				temp = temp[3]==0b0 ? temp.overwrite(3,1,0b1) : temp.overwrite(3,1,0b0)
-				self.overwrite_piece(i,temp)
+				overwrite_piece(i,temp)
 			end
+
 			@rotated[0] = @rotated[0]==1 ? 0 : 1
 
 		when ROTATE_AXIS_Y
 			#DBに入れるとか大規模探索時に必要なやつ
 			#Y軸回転して容量削減(回転基準未定義)
 		end
-			
-	end
-	
-	def put(i)
 
 	end
 
-	def enum_next_board
+	def enum_next_board(player)
+		@next_boards.clear
+		NUM_OF_CELL.times do |i|
 			
-		@next_borads.push()
+			next unless get_piece_player(i) == player
+			
+			puts "get_piece_type(i):#{"%b" % get_piece_type(i)}"
+			puts "MOVE[get_piece_type(i)]:#{"%b" % MOVE[get_piece_type(i)]}"
+			mesh = MOVE[get_piece_type(i)]
+			
+			puts "mesh:%b"%mesh
+			next if mesh == 0
+			#空だったら次
+			
+			MOVE_MESH_LENGTH.times do |j|
+				j = MOVE_MESH_LENGTH - j - 1 if player == PLAYER1
+				#PLAYER1基準で舐めるとLSBからになる 逆は自然にできる
+
+				next if mesh[j].zero?
+				#空だったら
+
+				next if 6 < j && i/BOARD_HEIGHT < 1 
+				next if j < 3 && 2 <= i/BOARD_HEIGHT
+				#横方向の動きは端を超えてできない
+
+				next if j%3==2 && i%BOARD_HEIGHT==0
+				next if j%3==0 && i%BOARD_HEIGHT==3
+				#縦方向の動きは端を超えてできない
+
+				puts "bits #{"%b" % @bits}"
+				temp_board = Board.new(@bits)
+				temp_piece = get_piece(i)
+
+				from = i
+				to = i+MOVE_IDX[j]
+
+				next unless 0 <= to && to < NUM_OF_CELL
+				if get_piece(to)!=B then
+					next if get_piece_player(to)==player 
+					temp_board.capture_piece(to)
+				end
+				temp_board.replace_piece(i,to)
+
+				@next_boards.push(temp_board)
+
+			end	
+		end
+		return @next_boards
+		
 	end	
+
+	def view
+		NUM_OF_CELL.times do |i|
+			temp = "  "
+			case get_piece_player(i)
+			when PLAYER1
+				temp[1]="1"
+			when PLAYER2
+				temp[1]="2"
+			end
+
+			case get_piece_type(i)
+			when B
+				temp = "  "
+			when C
+				temp[0]="c"
+			when E
+				temp[0]="e"
+			when G
+				temp[0]="g"
+			when L
+				temp[0]="l"
+			when H
+				temp[0]="h"
+			end
+
+			print "#{temp} "
+			if i%4==3
+				print "\n"
+			end
+		end
+	end
+			
+
+	def put(i)
+		self.bits = @next_boards[i].bits
+	end
 
 end
 
 srv = Server.new('localhost',4444)
-while srv.board == nil || srv.turn == nil do
-	sleep 0.1
+srv.wait
+board = Board.new(srv.board)
+srv.debug_print
+if srv.my_turn == srv.turn then
+	board.enum_next_board(srv.my_turn).each do |board|
+		board.view
+		puts "===="
+	end
 end
-print srv.board,srv.turn
+
+	

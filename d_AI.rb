@@ -42,6 +42,7 @@ MOVE = {
 	L => 0b111101111,
 	H => 0b110101110
 }
+
 MOVE_IDX = {
 	8 => -1*BOARD_HEIGHT-1,
 	7 => -1*BOARD_HEIGHT,
@@ -57,16 +58,12 @@ MOVE_IDX = {
 #ビット列操作面倒だからいい具合にする
 class Integer
 	
-	def slice(first,last)
-		#"%b"% ~(0b1111 << 10) ..1000011111111..
-		return self.to_s(2)[(-last-1)..(-first-1)].to_i(2)
+	def slice(first,length)
+		return (self >> first) & ~(-1 << length)
 	end
 
-	def overwrite(first,last,value)
-		
-		temp = self - (self.to_s(2)[(-last-1)..(-first-1)].to_i(2) << first)
-		temp += (value << first)
-		return temp
+	def overwrite(first,length,value)
+		return ((self & ~(~(-1<<length)<<first )) + (value << first))
 	end
 
 end
@@ -340,7 +337,7 @@ class Board
 			#空だったら次
 			
 			MOVE_MESH_LENGTH.times do |j|
-				j = MOVE_MESH_LENGTH - j - 1 if player == PLAYER1
+				j = MOVE_MESH_LENGTH - j - 1 if player == PLAYER2
 				#PLAYER1基準で舐めるとLSBからになる 逆は自然にできる
 
 				next if mesh[j].zero?

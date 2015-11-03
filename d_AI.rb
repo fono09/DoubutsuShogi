@@ -69,6 +69,188 @@ class Integer
 
 end
 
+
+#ソケット通信対するラッパ
+class Server
+
+	attr_reader :board, :my_turn, :turn, :request_queue
+
+	def initialize(addr,port)
+		@socket = TCPSocket.open(addr,port)
+		@board = nil
+		@cpiece = {}
+		@my_turn = nil
+		@turn = nil
+		
+		@request_queue = Queue.new
+		@speaker = Thread.new do
+			while request = @request_queue.deq do
+				@socket.write(request)
+				sleep 0.01
+			end
+		end
+		@speaker.run
+		
+		@listener = Thread.new do
+			while line = @socket.gets do
+				puts line
+				if line =~ /--/ then
+					puts "HIT 1"
+					@board = to_b(line)
+					save_cpiece_position(line)
+				end
+
+				if line =~ /You are Player(\d)/ then
+					puts "HIT 2"
+					@my_turn = eval("PLAYER#{$1.to_i}")
+				end
+				
+				if line =~ /^Player(\d)/ then
+					puts "HIT 3"
+					@turn = eval("PLAYER#{$1.to_i}")
+				end
+					
+				sleep 0.1
+			end
+		end
+		@listener.run
+	end
+
+	def request(str)
+		@request_queue.enq(str)
+		while @request_queue.length > 0 do
+			sleep 0.1
+		end
+	end
+	
+	def save_cpiece_position(board)
+		@cpiece = {}
+		lines = board.split(/, /)
+		if lines.length > 3 then
+			lines.each.with_index do |line|
+				piece = line.split(/ /)
+				@cpiece[piece[0]] = piece[1]
+			end
+		end
+	end
+
+	def to_b(str)
+		bits = 0b0
+		str.chomp!
+		str.split(/, /).each do |line|
+			piece = line.split(/ /)
+			/([A-E])([1-6])/ =~ piece[0]
+			col = $1.codepoints[0].to_i - 'A'.codepoints[0].to_i
+			row = $2.to_i-1
+
+			temp_bits = 0b0
+			type = ''
+			player = 0b0
+			unless /--/ =~ piece[1] then
+				/([a-z])([1-2])/ =~ piece[1]
+				type = eval($1.upcase)
+				player = eval("PLAYER#{$2.to_i}")
+				temp_bits+=type
+				temp_bits+=player
+			end
+			if type== L then
+				if player==PLAYER1 && row==0 then
+					raise "Try(PLAYER1) detected. Check the board."
+				elsif player==PLAYER2 && row==3 then
+					raise "Try(PLAYER2) detected. Check the board."
+				end
+			end
+					
+
+			if col < BOARD_WIDTH && row < BOARD_HEIGHT then
+				bits += temp_bits << ((NUM_OF_CELL-col*BOARD_HEIGHT-row-1)*PIECE_LENGTH+CPIECE_AREA)
+			else
+				temp_bits = 0b0
+				if G-type < 0 then
+					raise "Lion has been taken. Check the board."
+				end
+				temp_bits += 0b1 << ((G-type)*CPIECE_LENGTH)
+				bits += temp_bits << (CPIECE_PLAYER_AREA*(player == PLAYER1 ? 1 : 0))
+			end
+		end
+
+
+		return bits
+	end
+
+	def to_mv(board)
+		diff = @board ^ board
+		from = ''
+		to = ''
+
+		#持ち駒指し検出
+		NUM_OF_PLAYER.times do |j|
+			NUM_OF_CPIECE_TYPES.times do |i|
+				if (CPIECE_BITMASK << CPIECE_LENGTH) & (diff >> CPIECE_PLAYER_AREA*j) > 0 then
+					if (CPIECE_BITMASK << CPIECE_LENGTH) & (board >> CPIECE_PLAYER_AREA*j) > 0 then
+						case i
+						when 0 
+							from = @cpiece["g#{j+1}"]
+						when 1 
+							from = @cpiece["e#{j+1}"]
+						when 2
+							from = @cpiece["c#{j+1}"]
+						end
+
+					end
+				end
+			end
+		end
+
+		#ボード動かし検出
+		NUM_OF_CELL.times do |i|
+			j = NUM_OF_CELL-i-1
+			if P_BITMASK & (diff >> (i*PIECE_LENGTH+CPIECE_AREA)) > 0 then
+				if P_BITMASK & (board >> (i*PIECE_LENGTH+CPIECE_AREA)) == 0 then
+					from = [(j/BOARD_HEIGHT+'A'.codepoints[0])].pack('U') + (j%4+1).to_s
+				elsif P_BITMASK & (@board >> (i*PIECE_LENGTH+CPIECE_AREA)) == 0
+					to = [(j/BOARD_HEIGHT+'A'.codepoints[0])].pack('U') + (j%4+1).to_s
+				else
+					to = [(j/BOARD_HEIGHT+'A'.codepoints[0])].pack('U') + (j%4+1).to_s
+				end
+			end
+		end
+		puts "mv #{from} #{to}"
+		request("mv #{from} #{to}\n")
+	end
+
+
+	def debug_print
+		puts "board %b\n" % @board
+		puts "turn %b\n" % @turn
+		puts "my_turn %b\n" % @my_turn
+	end
+
+	def initial_wait
+		while @turn == nil || @board == nil || @my_turn == nil do
+			request("turn\n")
+			request("board\n")
+			request("whoami\n")
+		end
+	end
+
+	def wait
+		request("turn\n")
+
+		while @turn != @my_turn do
+			request("turn\n")
+		end
+		before = @board
+		request("board\n")
+		sleep 1
+	end
+
+	def finalize
+		@socket.close
+	end
+
+end
+
 #ボードビット列に対する操作
 class Board
 
@@ -80,6 +262,7 @@ class Board
 		#@rotated = [0,0]
 		@next_boards = []
 	end
+
 
 	def is_board?(i)
 		return (i < NUM_OF_CELL)
@@ -208,7 +391,7 @@ class Board
 			MOVE_MESH_LENGTH.times do |j|
 				j = MOVE_MESH_LENGTH - j - 1 if player != PLAYER2
 				border =  [i%BOARD_HEIGHT==0,BOARD_WIDTH-1 <= i/BOARD_HEIGHT,i%BOARD_HEIGHT==BOARD_HEIGHT-1,i/BOARD_HEIGHT < 1]
-				border = (player==PLAYER1 ? border : [border[2],border[3],border[0],border[1]])
+				#border = (player==PLAYER1 ? border : [border[2],border[3],border[0],border[1]])
 				#PLAYER1基準で舐めるとLSBからになる 逆は絶対インデックスによる境界判定をひっくり返す
 				
 				puts "j:#{j}"
@@ -301,213 +484,42 @@ class Board
 
 end
 
-
-#ソケット通信対するラッパ
-class Server
-
-	attr_reader :board, :my_turn, :turn
-
-	def initialize(addr,port)
-		@socket = TCPSocket.open(addr,port)
-		@board = nil
-		@cpiece = {}
-		@my_turn = nil
-		@turn = nil
-		@events = [
-			["board\n",Proc.new{|line|
-				if line =~ /--/ then
-					@board = to_b(line)
-					save_cpiece_position(line)
-				end
-			},true],
-			["whoami\n",Proc.new{|line|
-				if line =~ /You are Player(\d)\.$/ then
-					@my_turn = eval("PLAYER#{$1.to_i}")
-				end
-
-			},true],
-			["turn\n",Proc.new{|line|
-				if line =~ /^Player(\d)$/ then
-					@turn = eval("PLAYER#{$1.to_i}")
-				end
-			},true],
-		]
-
-		@listener = Thread.new do
-			begin
-				while line = @socket.gets do
-					@events.each do |obj|
-						obj[1].call(line) if obj[2]
-					end
-					puts "Server : #{line}"
-					sleep 0.1
-				end
-			ensure
-				puts "Server listener stoped"
-			end
-		end
-
-		@speaker = Thread.new do 
-			begin
-				while true do
-					@events.each do |obj|
-						@socket.write(obj[0]) if obj[2]
-					end
-					sleep 0.1
-				end
-			ensure
-				puts "Server speaker stoped"
-			end
-		end
-
-	end
-
-	def start_handler(index)
-		unless index == nil then
-			@events[index][2] = true
-		else
-			@events = @events.each do |obj|
-				obj[2] = true
-			end
-			p @events
-		end
-	end
-
-	def stop_handler(index)
-		unless index == nil then
-			@events[index][2] = false
-		else
-			@events = @events.each do |obj|
-				obj[2] = false
-			end
-		end
-	end
-
-	def save_cpiece_position(board)
-		@cpiece = {}
-		lines = board.split(/, /)
-		if lines.length > 3 then
-			lines.each.with_index do |line|
-				piece = line.split(/ /)
-				@cpiece[piece[0]] = piece[1]
-			end
-		end
-	end
-
-	def to_b(str)
-		bits = 0b0
-		str.chomp!
-		str.split(/, /).each do |line|
-			piece = line.split(/ /)
-			/([A-E])([1-6])/ =~ piece[0]
-			col = $1.codepoints[0].to_i - 'A'.codepoints[0].to_i
-			row = $2.to_i-1
-
-			temp_bits = 0b0
-			type = ''
-			player = 0b0
-			unless /--/ =~ piece[1] then
-				/([a-z])([1-2])/ =~ piece[1]
-				type = eval($1.upcase)
-				player = eval("PLAYER#{$2.to_i}")
-				temp_bits+=type
-				temp_bits+=player
-			end
-
-			if col < BOARD_WIDTH && row < BOARD_HEIGHT then
-				bits += temp_bits << ((NUM_OF_CELL-col*BOARD_HEIGHT-row-1)*PIECE_LENGTH+CPIECE_AREA)
-			else
-				temp_bits = 0b0
-				if G-type < 0 then
-					raise "LION has been taken. Check the board."
-				end
-				temp_bits += 0b1 << ((G-type)*CPIECE_LENGTH)
-				bits += temp_bits << (CPIECE_PLAYER_AREA*(player == PLAYER1 ? 1 : 0))
-			end
-		end
-
-
-		return bits
-	end
-
-	def to_mv(board)
-		diff = @board ^ board
-		from = ''
-		to = ''
-
-		#持ち駒指し検出
-		NUM_OF_PLAYER.times do |j|
-			NUM_OF_CPIECE_TYPES.times do |i|
-				if (CPIECE_BITMASK << CPIECE_LENGTH) & (diff >> CPIECE_PLAYER_AREA*j) > 0 then
-					if (CPIECE_BITMASK << CPIECE_LENGTH) & (board >> CPIECE_PLAYER_AREA*j) > 0 then
-						case i
-						when 0 
-							from = @cpiece["g#{j+1}"]
-						when 1 
-							from = @cpiece["e#{j+1}"]
-						when 2
-							from = @cpiece["c#{j+1}"]
-						end
-
-					end
-				end
-			end
-		end
-
-		#ボード動かし検出
-		NUM_OF_CELL.times do |i|
-			j = NUM_OF_CELL-i-1
-			if P_BITMASK & (diff >> (i*PIECE_LENGTH+CPIECE_AREA)) > 0 then
-				if P_BITMASK & (board >> (i*PIECE_LENGTH+CPIECE_AREA)) == 0 then
-					from = [(j/BOARD_HEIGHT+'A'.codepoints[0])].pack('U') + (j%4+1).to_s
-				elsif P_BITMASK & (@board >> (i*PIECE_LENGTH+CPIECE_AREA)) == 0
-					to = [(j/BOARD_HEIGHT+'A'.codepoints[0])].pack('U') + (j%4+1).to_s
-				else
-					to = [(j/BOARD_HEIGHT+'A'.codepoints[0])].pack('U') + (j%4+1).to_s
-				end
-			end
-		end
-		@socket.write("mv #{from} #{to}\n")
-	end
-
-
-	def debug_print
-		puts "board %b\n" % @board
-		puts "turn %b\n" % @turn
-		puts "my_turn %b\n" % @my_turn
-	end
-
-	def initial_wait
-		start_handler(nil)
-		while @board == nil || @turn == nil || @my_turn == nil  do
-			sleep 0.5
-		end
-		stop_handler(nil)
-	end
-
-	def wait
-		start_handler(nil)
-		while @turn != @my_turn do
-			sleep 0.5
-		end
-		stop_handler(nil)
-	end
-
-end
-
-srv = Server.new('192.168.0.3',4444)
+srv = Server.new('localhost',4444)
 srv.initial_wait
-board = Board.new(srv.board)
 srv.debug_print
 
+enemy_hands = nil
+#相手着手可能手
+
+while true do
 	srv.wait
+	srv.wait
+	#秘伝のタレ([大嘘]2段階検知)
+	
+	raise "Rule infringement detected" if enemy_hands && !enemy_hands.index(srv.board)
+	#ルール違反検知
+
+	board = Board.new(srv.board)
+
 	board.enum_next_board(srv.my_turn)
 	next_move = board.next_boards
 	next_move.each do |obj|
 		obj.view
 		puts "======="
 	end
-	srv.to_mv(next_move[rand(next_move.length)-1].bits)
-	srv.wait
+	#着手可能手列挙
+
+	next_board = next_move[rand(next_move.length)-1]
+	srv.to_mv(next_board.bits)
+	#ランダム着手
+
+	next_board.enum_next_board(srv.my_turn==PLAYER1 ? PLAYER2 : PLAYER1)
+	enemy_hands = next_board.next_boards.map{|obj| obj.bits}
+	#ルール違反検知用 相手着手可能手列挙
+
+	sleep 1
+end
+
+	
 
 

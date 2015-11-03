@@ -1,6 +1,6 @@
 require 'socket'
 
-serverAddr = "192.168.0.3"
+serverAddr = "localhost"
 serverPort = 4444
 
 s = TCPSocket.open(serverAddr,serverPort)

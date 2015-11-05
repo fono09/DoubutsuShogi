@@ -81,32 +81,30 @@ class Server
 		@cpiece = {}
 		@my_turn = nil
 		@turn = nil
+		@try = false
 		
 		@request_queue = Queue.new
 		@speaker = Thread.new do
 			while request = @request_queue.deq do
 				@socket.write(request)
-				sleep 0.01
+				sleep 0.1
 			end
 		end
 		@speaker.run
 		
 		@listener = Thread.new do
 			while line = @socket.gets do
-				puts line
+				#puts line
 				if line =~ /--/ then
-					puts "HIT 1"
 					@board = to_b(line)
 					save_cpiece_position(line)
 				end
 
 				if line =~ /You are Player(\d)/ then
-					puts "HIT 2"
 					@my_turn = eval("PLAYER#{$1.to_i}")
 				end
 				
 				if line =~ /^Player(\d)/ then
-					puts "HIT 3"
 					@turn = eval("PLAYER#{$1.to_i}")
 				end
 					
@@ -129,7 +127,9 @@ class Server
 		if lines.length > 3 then
 			lines.each.with_index do |line|
 				piece = line.split(/ /)
-				@cpiece[piece[0]] = piece[1]
+				if piece[0] =~ /[DE]/ then
+					@cpiece[piece[1]] = piece[0]
+				end
 			end
 		end
 	end
@@ -153,14 +153,15 @@ class Server
 				temp_bits+=type
 				temp_bits+=player
 			end
-			if type== L then
+
+			if type==L && col < 2 then
 				if player==PLAYER1 && row==0 then
 					raise "Try(PLAYER1) detected. Check the board."
 				elsif player==PLAYER2 && row==3 then
 					raise "Try(PLAYER2) detected. Check the board."
 				end
 			end
-					
+				
 
 			if col < BOARD_WIDTH && row < BOARD_HEIGHT then
 				bits += temp_bits << ((NUM_OF_CELL-col*BOARD_HEIGHT-row-1)*PIECE_LENGTH+CPIECE_AREA)
@@ -183,20 +184,24 @@ class Server
 		from = ''
 		to = ''
 
+		puts "diff:%b" % diff
+		puts "@cpiece"
+		p @cpiece
+
 		#持ち駒指し検出
 		NUM_OF_PLAYER.times do |j|
 			NUM_OF_CPIECE_TYPES.times do |i|
-				if (CPIECE_BITMASK << CPIECE_LENGTH) & (diff >> CPIECE_PLAYER_AREA*j) > 0 then
-					if (CPIECE_BITMASK << CPIECE_LENGTH) & (board >> CPIECE_PLAYER_AREA*j) > 0 then
-						case i
-						when 0 
-							from = @cpiece["g#{j+1}"]
-						when 1 
-							from = @cpiece["e#{j+1}"]
-						when 2
-							from = @cpiece["c#{j+1}"]
-						end
-
+				temp_before = @board.slice(CPIECE_LENGTH*i+CPIECE_PLAYER_AREA*j,CPIECE_LENGTH)
+				temp_after = board.slice(CPIECE_LENGTH*i+CPIECE_PLAYER_AREA*j,CPIECE_LENGTH)
+				puts "j:#{j} i:#{i} temp_before:#{temp_before} temp_after:#{temp_after} first:#{CPIECE_LENGTH*i+CPIECE_PLAYER_AREA*j}"
+				if temp_before > temp_after then
+					case i
+					when 0 
+						from = @cpiece["g#{NUM_OF_PLAYER-j}"]
+					when 1 
+						from = @cpiece["e#{NUM_OF_PLAYER-j}"]
+					when 2
+						from = @cpiece["c#{NUM_OF_PLAYER-j}"]
 					end
 				end
 			end
@@ -215,6 +220,7 @@ class Server
 				end
 			end
 		end
+		
 		puts "mv #{from} #{to}"
 		request("mv #{from} #{to}\n")
 	end
@@ -232,17 +238,6 @@ class Server
 			request("board\n")
 			request("whoami\n")
 		end
-	end
-
-	def wait
-		request("turn\n")
-
-		while @turn != @my_turn do
-			request("turn\n")
-		end
-		before = @board
-		request("board\n")
-		sleep 1
 	end
 
 	def finalize
@@ -385,13 +380,30 @@ class Board
 			puts "MOVE[get_piece_type(i)]:#{"%9b" % MOVE[get_piece_type(i)]}"
 			mesh = MOVE[get_piece_type(i)]
 
-			next if mesh == 0
-			#空だったら次
+			if mesh == 0 then
+				NUM_OF_CPIECE_TYPES.times do |j|
+					j += (player == PLAYER1) ? NUM_OF_CELL : (NUM_OF_CELL + NUM_OF_CPIECE_TYPES-1)
+					if get_cpiece(j)!=0 then
+						temp_board = Board.new(@bits)
+						temp_board.dec_cpiece(j)
+						case j%3
+						when 0
+							temp_board.overwrite_piece(i,C+player)
+						when 1
+							temp_board.overwrite_piece(i,E+player)
+						when 2
+							temp_board.overwrite_piece(i,G+player)
+						end
+						@next_boards.push(temp_board)
+					end
+				end
+			end
+			#空だったら手駒を調べる
 
 			MOVE_MESH_LENGTH.times do |j|
 				j = MOVE_MESH_LENGTH - j - 1 if player != PLAYER2
 				border =  [i%BOARD_HEIGHT==0,BOARD_WIDTH-1 <= i/BOARD_HEIGHT,i%BOARD_HEIGHT==BOARD_HEIGHT-1,i/BOARD_HEIGHT < 1]
-				#border = (player==PLAYER1 ? border : [border[2],border[3],border[0],border[1]])
+				border = [border[2],border[3],border[0],border[1]] if player == PLAYER2
 				#PLAYER1基準で舐めるとLSBからになる 逆は絶対インデックスによる境界判定をひっくり返す
 				
 				puts "j:#{j}"
@@ -409,9 +421,11 @@ class Board
 
 				temp_board = Board.new(@bits)
 				temp_piece = get_piece(i)
+				temp_piece_type = get_piece_type(i)
 
 				from = i
-				to = i+MOVE_IDX[j]
+				index = player==PLAYER1 ? j : MOVE_MESH_LENGTH-j-1
+				to = i+MOVE_IDX[index]
 				puts "from,to = #{from},#{to}"
 
 				next if to < -1 || NUM_OF_CELL-1 < to 
@@ -422,12 +436,17 @@ class Board
 					puts "player check passed"
 					temp_board.capture_piece(to)
 				end
+
 				temp_board.replace_piece(from,to)
+				if temp_piece_type == C && from%BOARD_HEIGHT==1 then
+					temp_board.overwrite_piece(to,H+player)
+				end
 
 				@next_boards.push(temp_board)
 
 			end	
 		end
+
 		return @next_boards
 
 	end	
@@ -492,34 +511,54 @@ enemy_hands = nil
 #相手着手可能手
 
 while true do
-	srv.wait
-	srv.wait
-	#秘伝のタレ([大嘘]2段階検知)
 	
-	raise "Rule infringement detected" if enemy_hands && !enemy_hands.index(srv.board)
-	#ルール違反検知
+	if srv.my_turn != srv.turn then
 
-	board = Board.new(srv.board)
+		if enemy_hands == nil then
+			next_board = Board.new(srv.board)
+			next_board.enum_next_board(srv.my_turn==PLAYER1 ? PLAYER2 : PLAYER1)
+			enemy_hands = next_board.next_boards.map{|obj| obj.bits}
+			#初期例外
+		end
 
-	board.enum_next_board(srv.my_turn)
-	next_move = board.next_boards
+		while srv.my_turn != srv.turn do
+			srv.request("turn\n")
+		end
+
+		board = srv.board
+		while (srv.board ^ board) == 0 do
+			srv.request("board\n")
+		end
+		raise "Rule infringement detected" if enemy_hands && !enemy_hands.index(srv.board)
+	end
+
+	board_now = Board.new(srv.board)
+	board_now.enum_next_board(srv.my_turn)
+	next_move = board_now.next_boards
+	
 	next_move.each do |obj|
 		obj.view
-		puts "======="
+		puts "==========="
 	end
-	#着手可能手列挙
 
 	next_board = next_move[rand(next_move.length)-1]
+	next_board.view
+	puts "========"
 	srv.to_mv(next_board.bits)
-	#ランダム着手
+
 
 	next_board.enum_next_board(srv.my_turn==PLAYER1 ? PLAYER2 : PLAYER1)
 	enemy_hands = next_board.next_boards.map{|obj| obj.bits}
-	#ルール違反検知用 相手着手可能手列挙
 
-	sleep 1
+	count = 0
+	srv.request("turn\n")
+	srv.request("board\n")
+	while srv.my_turn == srv.turn do
+		srv.request("turn\n")
+		srv.request("board\n")
+		count+=1
+		if count > 10 then
+			srv.to_mv(next_board.bits)
+		end
+	end
 end
-
-	
-
-

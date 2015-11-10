@@ -458,8 +458,8 @@ class Board
 			return @next_boards
 		end
 
-		return enum_next_board(player).map do |obj|
-			obj.build_game_tree(player == PLAYER1 ? PLAYER2 : PLAYER1,depth-1))
+		return enum_next_board(player).inject do |arr,obj|
+			arr.concat(obj.build_game_tree(player == PLAYER1 ? PLAYER2 : PLAYER1,depth-1))
 		end
 	end
 

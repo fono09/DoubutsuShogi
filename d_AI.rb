@@ -153,7 +153,7 @@ class Server
 				temp_bits+=type
 				temp_bits+=player
 			end
-
+=begin
 			if type==L && col < 2 then
 				if player==PLAYER1 && row==0 then
 					raise "Try(PLAYER1) detected. Check the board."
@@ -161,6 +161,8 @@ class Server
 					raise "Try(PLAYER2) detected. Check the board."
 				end
 			end
+=end
+#要改修
 				
 
 			if col < BOARD_WIDTH && row < BOARD_HEIGHT then
@@ -451,6 +453,16 @@ class Board
 
 	end	
 
+	def build_game_tree(player,depth)
+		if depth == 0 then
+			return @next_boards
+		end
+
+		return enum_next_board(player).map do |obj|
+			obj.build_game_tree(player == PLAYER1 ? PLAYER2 : PLAYER1,depth-1))
+		end
+	end
+
 	def view
 		(NUM_OF_CELL+NUM_OF_CPIECE_TYPES*2).times do |i|
 			temp = "  "
@@ -546,9 +558,11 @@ while true do
 	puts "========"
 	srv.to_mv(next_board.bits)
 
-
 	next_board.enum_next_board(srv.my_turn==PLAYER1 ? PLAYER2 : PLAYER1)
 	enemy_hands = next_board.next_boards.map{|obj| obj.bits}
+
+	p next_board.build_game_tree(srv.my_turn==PLAYER1 ? PLAYER2 : PLAYER1,5)
+	#深さ5のゲーム木生成
 
 	count = 0
 	srv.request("turn\n")

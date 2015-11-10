@@ -56,6 +56,9 @@ MOVE_IDX = {
 	0 => BOARD_HEIGHT+1
 }
 
+#探索深さ
+DEPTH = 5
+
 #ビット列操作面倒だからいい具合にする
 class Integer
 
@@ -81,7 +84,7 @@ class Server
 		@cpiece = {}
 		@my_turn = nil
 		@turn = nil
-		@try = false
+		@try = [false,false]
 		
 		@request_queue = Queue.new
 		@speaker = Thread.new do
@@ -153,16 +156,17 @@ class Server
 				temp_bits+=type
 				temp_bits+=player
 			end
-=begin
+			
 			if type==L && col < 2 then
 				if player==PLAYER1 && row==0 then
-					raise "Try(PLAYER1) detected. Check the board."
+					raise "Try(PLAYER1) detected. Check the board." if @try[0]
+					@try[0]=true
 				elsif player==PLAYER2 && row==3 then
-					raise "Try(PLAYER2) detected. Check the board."
+					raise "Try(PLAYER2) detected. Check the board." if @try[1]
+					@try[1]=true
 				end
 			end
-=end
-#要改修
+			#要改修
 				
 
 			if col < BOARD_WIDTH && row < BOARD_HEIGHT then
@@ -257,6 +261,7 @@ class Board
 	def initialize(bits)
 		@bits = bits
 		#@rotated = [0,0]
+		@last=false
 		@next_boards = []
 	end
 
@@ -336,6 +341,7 @@ class Board
 			pos = NUM_OF_CELL+2
 		when L
 			puts "Lion #{i} Captured!!!"
+			@last = true
 		when H
 			pos = NUM_OF_CELL
 		end
@@ -440,9 +446,16 @@ class Board
 				end
 
 				temp_board.replace_piece(from,to)
-				if temp_piece_type == C && from%BOARD_HEIGHT==1 then
-					temp_board.overwrite_piece(to,H+player)
+				flag = false
+				if temp_piece_type == C then
+					case player
+					when PLAYER1
+						flag = true if from%BOARD_HEIGHT==1  && to%BOARD_HEIGHT==0
+					when PLAYER2
+						flag = true if from%BOARD_HEIGHT==2 && to%BOARD_HEIGHT==3
+					end
 				end
+				temp_board.overwrite_piece(to,H+player) if flag
 
 				@next_boards.push(temp_board)
 
@@ -454,13 +467,14 @@ class Board
 	end	
 
 	def build_game_tree(player,depth)
-		if depth == 0 then
-			return @next_boards
+
+		enum_next_board(player)
+
+		if depth == 0 || @last == true then
+			return
 		end
 
-		return enum_next_board(player).inject do |arr,obj|
-			arr.concat(obj.build_game_tree(player == PLAYER1 ? PLAYER2 : PLAYER1,depth-1))
-		end
+		obj.build_game_tree(player == PLAYER1 ? PLAYER2 : PLAYER1,depth-1))
 	end
 
 	def view
@@ -546,8 +560,13 @@ while true do
 
 	board_now = Board.new(srv.board)
 	board_now.enum_next_board(srv.my_turn)
-	next_move = board_now.next_boards
+
+	puts "start build_game_tree"
+	initial_turn = srv.my_turn
+	board_now.build_game_tree(initial_turn,DEPTH)
+	#深さDEPTHのゲーム木生成
 	
+	next_move = board_now.next_boards
 	next_move.each do |obj|
 		obj.view
 		puts "==========="
@@ -557,13 +576,6 @@ while true do
 	next_board.view
 	puts "========"
 	srv.to_mv(next_board.bits)
-
-	next_board.enum_next_board(srv.my_turn==PLAYER1 ? PLAYER2 : PLAYER1)
-	enemy_hands = next_board.next_boards.map{|obj| obj.bits}
-
-	p next_board.build_game_tree(srv.my_turn==PLAYER1 ? PLAYER2 : PLAYER1,5)
-	#深さ5のゲーム木生成
-
 	count = 0
 	srv.request("turn\n")
 	srv.request("board\n")
@@ -575,4 +587,7 @@ while true do
 			srv.to_mv(next_board.bits)
 		end
 	end
+
+	enemy_hands = next_board.next_boards.map{|obj| obj.bits}
+
 end

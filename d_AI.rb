@@ -97,7 +97,6 @@ class Server
 		
 		@listener = Thread.new do
 			while line = @socket.gets do
-				#puts line
 				if line =~ /--/ then
 					@board = to_b(line)
 					save_cpiece_position(line)
@@ -156,7 +155,7 @@ class Server
 				temp_bits+=type
 				temp_bits+=player
 			end
-			
+=begin
 			if type==L && col < 2 then
 				if player==PLAYER1 && row==0 then
 					raise "Try(PLAYER1) detected. Check the board." if @try[0]
@@ -167,6 +166,7 @@ class Server
 				end
 			end
 			#要改修
+=end
 				
 
 			if col < BOARD_WIDTH && row < BOARD_HEIGHT then
@@ -190,16 +190,11 @@ class Server
 		from = ''
 		to = ''
 
-		puts "diff:%b" % diff
-		puts "@cpiece"
-		p @cpiece
-
 		#持ち駒指し検出
 		NUM_OF_PLAYER.times do |j|
 			NUM_OF_CPIECE_TYPES.times do |i|
 				temp_before = @board.slice(CPIECE_LENGTH*i+CPIECE_PLAYER_AREA*j,CPIECE_LENGTH)
 				temp_after = board.slice(CPIECE_LENGTH*i+CPIECE_PLAYER_AREA*j,CPIECE_LENGTH)
-				puts "j:#{j} i:#{i} temp_before:#{temp_before} temp_after:#{temp_after} first:#{CPIECE_LENGTH*i+CPIECE_PLAYER_AREA*j}"
 				if temp_before > temp_after then
 					case i
 					when 0 
@@ -255,16 +250,19 @@ end
 #ボードビット列に対する操作
 class Board
 
-	attr_reader :bits, :next_boards 
+	attr_reader :bits, :next_boards
 	#:rotated,
 
 	def initialize(bits)
 		@bits = bits
 		#@rotated = [0,0]
-		@last=false
+		@prev_board
 		@next_boards = []
+		@last = false
+		if lose?(PLAYER1) || lose?(PLAYER2) then
+			@last = true
+		end
 	end
-
 
 	def is_board?(i)
 		return (i < NUM_OF_CELL)
@@ -305,15 +303,12 @@ class Board
 	def overwrite_cpiece(i,piece)
 		raise "Can't overwrite PIECE_AREA" if is_board?(i)
 		first = (NUM_OF_CPIECE_CELL-(i-NUM_OF_CELL)-1)*CPIECE_LENGTH
-		puts "overwrite_cpiece first: #{first}"
 		@bits = @bits.overwrite(first,CPIECE_LENGTH,piece)
-		puts "overwrite_cpiece @bits = #{"%b" % @bits}"
 	end
 
 	def inc_cpiece(i)
 		raise "Can't increment PIECE_AREA" if is_board?(i)
 		temp = get_cpiece(i)
-		puts "inc_cpiece temp: #{temp}"
 		raise "CPIECE(#{i}) overflow" if temp > 2
 		overwrite_cpiece(i,temp+1)
 	end
@@ -340,7 +335,6 @@ class Board
 		when G
 			pos = NUM_OF_CELL+2
 		when L
-			puts "Lion #{i} Captured!!!"
 			@last = true
 		when H
 			pos = NUM_OF_CELL
@@ -349,7 +343,6 @@ class Board
 		overwrite_piece(i,0b0)
 
 		if pos !=nil then
-			puts "inc_cpiece(#{pos+player*NUM_OF_CPIECE_TYPES})"
 			inc_cpiece(pos+player*NUM_OF_CPIECE_TYPES)
 		end
 	end
@@ -378,17 +371,25 @@ class Board
 
 	end
 
-	def enum_next_board(player)
+	def clear_next_boards
 		@next_boards.clear
+	end
+
+	def set_prev_board(board)
+		@prev_board = board
+	end
+
+	def push_next_boards(board)
+		board.set_prev_board(self)
+		@next_boards.push(board)
+	end
+		
+		
+	def enum_next_board(player)
+		clear_next_boards
 		NUM_OF_CELL.times do |i|
 
-			next unless get_piece_player(i) == player
-
-			puts "get_piece_type(i):#{"%b" % get_piece_type(i)}"
-			puts "MOVE[get_piece_type(i)]:#{"%9b" % MOVE[get_piece_type(i)]}"
-			mesh = MOVE[get_piece_type(i)]
-
-			if mesh == 0 then
+			if get_piece(i) == B then
 				NUM_OF_CPIECE_TYPES.times do |j|
 					j += (player == PLAYER1) ? NUM_OF_CELL : (NUM_OF_CELL + NUM_OF_CPIECE_TYPES-1)
 					if get_cpiece(j)!=0 then
@@ -402,11 +403,15 @@ class Board
 						when 2
 							temp_board.overwrite_piece(i,G+player)
 						end
-						@next_boards.push(temp_board)
+						push_next_boards(temp_board)
 					end
 				end
 			end
-			#空だったら手駒を調べる
+			#空だったら手駒を置けるか調べる
+
+			next unless get_piece_player(i) == player
+			mesh = MOVE[get_piece_type(i)]
+			#ここからは盤面上の駒を動かす
 
 			MOVE_MESH_LENGTH.times do |j|
 				j = MOVE_MESH_LENGTH - j - 1 if player != PLAYER2
@@ -414,8 +419,6 @@ class Board
 				border = [border[2],border[3],border[0],border[1]] if player == PLAYER2
 				#PLAYER1基準で舐めるとLSBからになる 逆は絶対インデックスによる境界判定をひっくり返す
 				
-				puts "j:#{j}"
-
 				next if mesh[j].zero?
 				#空だったら
 
@@ -425,8 +428,6 @@ class Board
 				next if 5 < j && border[3]
 				#時計周りに境界チェック
 
-				puts "j:#{j} border check passed"
-
 				temp_board = Board.new(@bits)
 				temp_piece = get_piece(i)
 				temp_piece_type = get_piece_type(i)
@@ -434,14 +435,10 @@ class Board
 				from = i
 				index = player==PLAYER1 ? j : MOVE_MESH_LENGTH-j-1
 				to = i+MOVE_IDX[index]
-				puts "from,to = #{from},#{to}"
 
 				next if to < -1 || NUM_OF_CELL-1 < to 
 				if get_piece(to)!=B then
-					puts "get_piece_player(#{to}):#{get_piece_player(to)}"
-					puts "player:#{player}"
 					next if get_piece_player(to)==player 
-					puts "player check passed"
 					temp_board.capture_piece(to)
 				end
 
@@ -457,7 +454,7 @@ class Board
 				end
 				temp_board.overwrite_piece(to,H+player) if flag
 
-				@next_boards.push(temp_board)
+				push_next_boards(temp_board)
 
 			end	
 		end
@@ -466,16 +463,131 @@ class Board
 
 	end	
 
+	def last
+		count = 0
+		NUM_OF_CELL.times do |i|
+			count+=1 if get_piece_type(i) == L
+		end
+		return count < 2 ? true : false
+	end
+
+	def try(player)
+		3.times do |i|
+			j = player==PLAYER1 ? i*4+3 : i*4
+			return get_piece_type(j) == L
+		end
+	end
+
+	def lose?(player)
+
+		temp = true
+		NUM_OF_CELL.times do |i|
+			if get_piece_player(i) == (player == PLAYER1 ? PLAYER1 : PLAYER2) && get_piece_type(i) == L then
+				temp = false
+			end
+		end
+
+		@last = true if temp == true
+		return temp
+	end
+				
+	def evalute(player,gene)
+
+		statistics = []
+		NUM_OF_CPIECE_TYPES.times do |i|
+			case player
+			when PLAYER1
+				statistics.push(get_cpiece(NUM_OF_CELL+i)*1000**i)
+			when PLAYER2
+				statistics.push(get_cpiece(NUM_OF_CELL+NUM_OF_CPIECE_TYPES+i)*1000**i)
+			end
+		end
+		#持ち駒タイプ別カウント
+		
+		temp={C=>0,E=>0,G=>0,L=>0,H=>0}
+		l_pos = nil
+		front = nil
+		NUM_OF_CELL.times do |i|
+			if get_piece_player(i) == player && get_piece(i) != B then
+				temp[get_piece_type(i)]+=1
+				l_pos = i if get_piece_type(i) == E
+				if !front || front < player == PLAYER1 ? i%4 : 3-i%4 then
+					front = player == PLAYER1 ? i%4 : 3-i%4
+				end
+			end
+		end
+
+		i = nil
+		[C,E,G,L,H].each do |key|
+			case key
+			when C
+				i = 1
+			when E
+				i = 10
+			when G
+				i = 15
+			when L
+				i = 20
+			when H
+				i = 17
+			end
+			statistics.push(temp[key]*i)
+		end
+
+		
+		if l_pos then
+			statistics.push(player == PLAYER1 ? l_pos%4 : 3-l_pos%4)
+		else
+			statistics.push(0)
+			@last = true
+		end
+		
+		statistics.push(front)
+		#盤面タイプ別カウント,ライオン位置,最前線位置
+
+		return statistics
+
+	end
+
+
 	def build_game_tree(player,depth)
 
 		enum_next_board(player)
+
 
 		if depth == 0 || @last == true then
 			return
 		end
 
-		obj.build_game_tree(player == PLAYER1 ? PLAYER2 : PLAYER1,depth-1))
+		@next_boards.each do |obj|
+			if obj.last then
+				@last = true
+				return
+			end
+			obj.build_game_tree(player == PLAYER1 ? PLAYER2 : PLAYER1,depth-1)
+		end
 	end
+
+	def get_best_hand(player,depth)
+
+		temp = lose?(player) ? -10**10 : 0
+		temp += lose?(player == PLAYER1 ? PLAYER2 : PLAYER1) ? 1 : 0
+
+		if depth == 0 || @last == true || lose?(player) then
+			return temp
+		end
+
+		return @next_boards.inject(0) do |sum,n|
+			sum+=temp*(depth**depth**depth)+n.get_best_hand(player,depth-1)
+		end
+	end
+
+	def get_worst_hand(player,depth)
+
+		return get_best_hand(player == PLAYER1 ? PLAYER2 : PLAYER1,depth)
+	
+	end
+
 
 	def view
 		(NUM_OF_CELL+NUM_OF_CPIECE_TYPES*2).times do |i|
@@ -560,21 +672,31 @@ while true do
 
 	board_now = Board.new(srv.board)
 	board_now.enum_next_board(srv.my_turn)
+	
+	[PLAYER1,PLAYER2].each.with_index do |player,i|
+		factor = board_now.evalute(player,nil)
+		point = factor.inject(:+)
+		puts "Board#evalute PLAYER#{i+1} factor: #{factor.inspect} point: #{point}"
+	end
 
-	puts "start build_game_tree"
 	initial_turn = srv.my_turn
 	board_now.build_game_tree(initial_turn,DEPTH)
 	#深さDEPTHのゲーム木生成
-	
+
 	next_move = board_now.next_boards
 	next_move.each do |obj|
 		obj.view
 		puts "==========="
 	end
 
-	next_board = next_move[rand(next_move.length)-1]
+	#next_board = next_move[rand(next_move.length)-1]
+	#デバッグ用合法ランダム
+	
+	next_board = board_now.next_boards.max_by do |obj|
+		obj.get_best_hand(srv.my_turn,DEPTH)
+	end
 	next_board.view
-	puts "========"
+	puts "====Determinated===="
 	srv.to_mv(next_board.bits)
 	count = 0
 	srv.request("turn\n")

@@ -1,4 +1,6 @@
 require 'socket'
+require 'activerecord'
+require 'redis-objects'
 
 #スレッド内例外で落とす
 Thread.abort_on_exception = true
@@ -249,31 +251,40 @@ class Server
 
 end
 
+#Redis記憶用
+class Record_Board < ActiveRecord::Base
+	include Redis::Objects
+
+end
+
 #ボードビット列に対する操作
 class Board
 
 	attr_reader :bits, :next_boards
 	attr_accessor :prev_board
+	#:rotated,
 
 	def initialize(bits,prev)
 		@bits = bits
+		#@rotated = [0,0]
 		@prev_board = prev
 		@next_boards = nil
-	end
-
-	def lose?(player)
-			return true if find_piece(L+player)
-			return true if prev.tried?(player) && tried?(player)
-			return false
+		@last = false
+		@lose = {
+			PLAYER1 => false,
+			PLAYER2 => false
+		}
+		if tried(PLAYER1) || tried(PLAYER2) then
+			if @prev_board && (@prev_board.tried(PLAYER1) || @prev_board.tried(PLAYER2)) then
+				@lose[PLAYER1] = true if @prev_board.tried(PLAYER1)
+				@lose[PLAYER2] = true if @prev_board.tried(PLAYER2)
+				@last = true
+			end
 		end
-	end
-
-	def tried?(player)
-		try_posision = player==PLAYER1 ? 0 : BOARD_HEIGHT-1
-		if find_piece(L+player) % BOARD_HEIGHT == try_position then
-			return true
-		else
-			return false
+		if lose(PLAYER1) || lose(PLAYER2) then
+			@lose[PLAYER1] = lose(PLAYER1)
+			@lose[PLAYER2] = lose(PLAYER2)
+			@last = true
 		end
 	end
 
@@ -285,17 +296,6 @@ class Board
 		raise "Can't get CPIECE_AREA" unless is_board?(i)
 		first = (NUM_OF_CELL-i-1)*PIECE_LENGTH+CPIECE_AREA
 		return @bits.slice(first,PIECE_LENGTH)
-	end
-
-	def find_piece(p)
-		j = nil
-		NUM_OF_CELL.times do |i|
-			if get_piece(i) == p then
-				j = i
-				break
-			end
-		end
-		return j
 	end
 
 	def get_piece_player(i)
@@ -673,6 +673,12 @@ class Board
 		end
 	end
 
+end
+
+class Player
+end
+
+class AI < Player
 end
 
 srv = Server.new('localhost',4444)
